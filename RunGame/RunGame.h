@@ -14,6 +14,7 @@
 #include "Sky.h"
 #include "Camera.h"
 #include "xnacollision.h"
+#include "BlurFilter.h"
 
 #define ReleaseCOM(x) { if(x){ x->Release(); x = 0; } }        //COM组件释放
 
@@ -116,6 +117,11 @@ public:
 	/**更新向上的相机角度，以模拟天空变化效果*/
 	void UpdateUpCamera();
 
+	/**创建模糊所用资源，包括顶点/索引缓冲，着色器创建，以及着色器资源创建*/
+	void CreateBlurResource();
+
+	void DrawScreenBlur();      //绘制屏幕高斯模糊效果
+
 protected:
 	bool InitMainWindow();
 	bool InitDirect3D();
@@ -215,6 +221,19 @@ public:
 	int mFloorIndexCount;       //索引数目
 	Material mFloorMat;
 
+	//下面是高斯模糊对应的资源
+	ID3D11Buffer* mBlurVB;
+	ID3D11Buffer* mBlurIB;
+	ID3DX11Effect* mBlurFX;
+	ID3DX11EffectTechnique* mHorzBlurTech;    //横向滤波
+	ID3DX11EffectTechnique* mVertBlurTech;     //纵向滤波
+	ID3DX11EffectTechnique* mBlurScreenTech;
+	ID3DX11EffectShaderResourceVariable* mfxBlurInputMap;
+	ID3DX11EffectUnorderedAccessViewVariable* mfxBlurOutputMap;
+	ID3D11ShaderResourceView* mBlurSRV; 
+	ID3D11UnorderedAccessView* mBlurUAV;
+	ID3D11RenderTargetView* mBlurRTV;
+
 	XMFLOAT4X4 mWorld;
 	XMFLOAT4X4 mView;
 	XMFLOAT4X4 mProj;
@@ -229,6 +248,7 @@ public:
 
 	Camera mCam;
 	Sky* mSky;
+	BlurFilter mBlurFilter;
 	std::wstring mWndCaption;
 	D3D_DRIVER_TYPE md3dDriveType;   //驱动类型，通常电脑会有显卡，所以是硬件驱动
 	UINT m4xMsaaQuality;        //抗锯齿等级
@@ -264,6 +284,12 @@ private:
 	AxisAlignedBox obstacleCollision;
 
 	int blockNum = 0;     //碰撞次数，用于测试
+
+	bool quitGame;
+	bool bRestart;    //是否重启游戏
+	bool bDrawBlur;    //是否绘制高斯模糊效果（游戏结束时显示）
+
+	float mPlayerScore;    //玩家得分
 };
 
 

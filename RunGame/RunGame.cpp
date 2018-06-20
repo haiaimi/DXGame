@@ -51,7 +51,14 @@ RunGame::RunGame(HINSTANCE hInstance) :
 	mFloorTech(nullptr),
 	mFloorFX(nullptr),
 	mFloorTexSRV(nullptr),
-	mFloorNormalTexSRV(nullptr)
+	mFloorNormalTexSRV(nullptr),
+	mBlurVB(nullptr),
+	mBlurIB(nullptr),
+	mBlurFX(nullptr),
+	mBlurSRV(nullptr),
+	mBlurUAV(nullptr),
+	mBlurRTV(nullptr),
+	mSky(nullptr)
 {
 	//初始化Viewport结构
 	memset(&mScreenViewport, 0, sizeof(D3D11_VIEWPORT));
@@ -74,10 +81,14 @@ RunGame::RunGame(HINSTANCE hInstance) :
 
 	bInMove = false;
 	bInJump = false;
+	quitGame = false;
+	bRestart = false;
+	bDrawBlur = false;
 	floorSpeed = 2.1f;
 	ObstaclesInfo.clear();
 	SpawnObstacleDistance =50.f;
 	CarMoveDistancePerFrame = 0.f;
+	mPlayerScore = 0.f;
 }
 
 RunGame::~RunGame()
@@ -119,6 +130,13 @@ RunGame::~RunGame()
 		ReleaseCOM(mDynamicCubeMapRTV[i]);
 	}
 
+	ReleaseCOM(mBlurVB);
+	ReleaseCOM(mBlurIB);
+	ReleaseCOM(mBlurFX);
+	ReleaseCOM(mBlurSRV);
+	ReleaseCOM(mBlurUAV);
+	ReleaseCOM(mBlurRTV);
+
 	delete mSky;
 }
 
@@ -143,6 +161,8 @@ int RunGame::Run()
 			UpdateScene(mTimer.DeltaTime());
 			DrawScene();
 		}
+		if (quitGame)
+			return 0;
 	}
 
 	return (int)msg.wParam;
@@ -210,6 +230,7 @@ bool RunGame::Init()
 	mFloorMat.Reflect = XMFLOAT4(0.0f, 0.0f, 0.0f, 1.0f);
 
 	mSky = new Sky(md3dDevice, this, L"Texture/grasscube1024.dds", 5000.0f);
+	mBlurFilter.Init(md3dDevice, this, mClientWidth, mClientHeight, DXGI_FORMAT_R8G8B8A8_UNORM);
 
 	//创建纹理资源，这里直接使用DDS，为了提高利率，微软已经开源该库，见DDSTextureLoader.h
 	DirectX::CreateDDSTextureFromFile(md3dDevice, L"Texture/checkboard.dds", nullptr, &mliftSRV);
@@ -224,6 +245,7 @@ bool RunGame::Init()
 	BuildCubemapFX();
 	BuildCarFX();
 	BuildFloorFX();
+	CreateBlurResource();
 	SetInputLayout();     //创建输入布局
 
 	CreateDynamicCubeMapResource();
@@ -233,8 +255,8 @@ bool RunGame::Init()
 	XMMATRIX P = XMMatrixPerspectiveFovLH(0.25f*MathHelper::Pi, static_cast<float>(mClientWidth / mClientHeight), 1.0f, 1000.0f);       //创建投影矩阵
 	XMStoreFloat4x4(&mProj, P);
 
-	mEyePosW = XMFLOAT3(0.f, 10.f, -30.f);
-	XMVECTOR pos = XMVectorSet(0.f, 10.f, -30.f, 1.f);
+	mEyePosW = XMFLOAT3(0.f, 7.f, 25.f);
+	XMVECTOR pos = XMVectorSet(0.f, 7.f, 25.f, 1.f);
 	XMVECTOR target = XMVectorSet(0.f, 5.f, 0.f, 1.f);
 	XMVECTOR up = XMVectorSet(0.f, 1.f, 0.f, 0.f);
 
@@ -311,7 +333,7 @@ bool RunGame::InitMainWindow()
 
 	ShowWindow(mhMainWnd, SW_SHOW);
 	UpdateWindow(mhMainWnd);
-	SetWindowText(mhMainWnd, L" ");       //显示操作方法
+	SetWindowText(mhMainWnd, L"RunGame");       //显示操作方法
 
 	return true;
 }
@@ -487,7 +509,7 @@ void RunGame::UpdateScene(float dt)
 	{
 		SpawnObstacleDistance = 0.f;
 		EPlayerMoveDir i = EPlayerMoveDir(rand() % 3);
-		XMFLOAT3 SpawnLoc(0.f, 0.f, 100.f);
+		XMFLOAT3 SpawnLoc(0.f, 0.f, -100.f);
 
 		switch (i)
 		{
@@ -508,7 +530,7 @@ void RunGame::UpdateScene(float dt)
 	}
 
 	//if (mTimer.TotalTime() > 10.f)
-		floorSpeed += 0.01f * mTimer.DeltaTime();
+	floorSpeed += 0.05f * mTimer.DeltaTime();
 }
 
 void RunGame::DrawScene()
@@ -518,14 +540,27 @@ void RunGame::DrawScene()
 	static float PreFloorSpeed = 2.f;
 	static float PreTotalTime = 0.f;
 
-	floorMovePerFrame = -mTimer.TotalTime()*floorSpeed;
-	SpawnObstacleDistance = SpawnObstacleDistance + (100.f / 10.f)*(-floorMovePerFrame - PreTotalTime * PreFloorSpeed);      //这步十分重要，不能直接与floorSpeed，要考虑到材质偏移和TotalTime也有关系
-	CarMoveDistancePerFrame = (100.f / 10.f)*(-floorMovePerFrame - PreTotalTime * PreFloorSpeed);
+	if (bRestart)
+	{
+		PreFloorSpeed = 2.f;
+		PreTotalTime = 0.f;
+		bRestart = false;
+	}
+	
+	floorMovePerFrame = mTimer.TotalTime()*floorSpeed;
+	SpawnObstacleDistance = SpawnObstacleDistance + (100.f / 10.f)*(floorMovePerFrame - PreTotalTime * PreFloorSpeed);      //这步十分重要，不能直接与floorSpeed，要考虑到材质偏移和TotalTime也有关系
+	CarMoveDistancePerFrame = (100.f / 10.f)*(floorMovePerFrame - PreTotalTime * PreFloorSpeed);
+	//确保下面的参数不小于0
+	if (CarMoveDistancePerFrame < 0.f)
+		CarMoveDistancePerFrame = 0.f;
+	if (SpawnObstacleDistance < 0.f)
+		SpawnObstacleDistance = 0.f;
+
+	mPlayerScore += CarMoveDistancePerFrame * 1.f;
 
 	PreFloorSpeed = floorSpeed;
 	PreTotalTime = mTimer.TotalTime();
 	
-
 	// 下面使用特定的Viewport来渲染6个面到RenderTarget上（使用6个不同的相机）
 	md3dImmediateContext->RSSetViewports(1, &mCubeMapViewport);
 	for (int i = 0; i < 6; ++i)
@@ -536,77 +571,32 @@ void RunGame::DrawScene()
 
 		renderTargets[0] = mDynamicCubeMapRTV[i];
 		md3dImmediateContext->OMSetRenderTargets(1, renderTargets, mDynamicCubeMapDSV);     //设置新的RenderTarget
-																							//渲染到当前RenderTarget
+
+		//渲染到当前RenderTarget
 		DrawScene(mCubeMapCamera[i], false);
 	}
 
-	md3dImmediateContext->OMSetRenderTargets(1, &mRenderTargetView, mDepthStencilView);
-	md3dImmediateContext->RSSetViewports(1, &mScreenViewport);
 	md3dImmediateContext->GenerateMips(mDynamicCubeMapSRV);    //生成层次图
 
-	md3dImmediateContext->ClearRenderTargetView(mRenderTargetView, reinterpret_cast<const float*>(&Colors::Silver));
+	md3dImmediateContext->RSSetViewports(1, &mScreenViewport);
+
 	md3dImmediateContext->ClearDepthStencilView(mDepthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.f, 0);      //清理RenderTarget和深度模板缓冲进行绘制下一帧
+	if (bDrawBlur)
+	{
+		renderTargets[0] = mBlurRTV;
+		md3dImmediateContext->ClearRenderTargetView(mBlurRTV, reinterpret_cast<const float*>(&Colors::Cyan));
+		md3dImmediateContext->OMSetRenderTargets(1, renderTargets, 0);
+	}
+	else
+	{
+		renderTargets[0] = mRenderTargetView;
+		md3dImmediateContext->ClearRenderTargetView(mRenderTargetView, reinterpret_cast<const float*>(&Colors::Silver));
+		md3dImmediateContext->OMSetRenderTargets(1, renderTargets, mDepthStencilView);
+	}
 
-	//md3dImmediateContext->IASetInputLayout(mInputLayout);
-	//md3dImmediateContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);   //绘制的基本图元为三角形
-
-	//UINT stride = sizeof(Vertex);   //顶点结构的大小
-	//UINT offset = 0;
-	//md3dImmediateContext->IASetVertexBuffers(0, 1, &mCarVB, &stride, &offset);    //设置顶点缓冲
-	//md3dImmediateContext->IASetIndexBuffer(mCarIB, DXGI_FORMAT_R32_UINT, 0);       //设置索引缓冲
-
-	//XMMATRIX world = XMLoadFloat4x4(&mWorld);
-	//XMMATRIX view = XMLoadFloat4x4(&mView);
-	//XMMATRIX proj = XMLoadFloat4x4(&mProj);
-
-	////为效果文件缓冲区变量设置参数,这里是三个光源的参数
-	//mfxDirLight->SetRawValue(&mDirLight, 0, sizeof(mDirLight));
-	//mfxPointLight->SetRawValue(&mPointLight, 0, sizeof(mPointLight));
-	//mfxSpotLight->SetRawValue(&mSpotLight, 0, sizeof(mSpotLight));
-
-	////下面就是渲染部分
-	//D3DX11_TECHNIQUE_DESC techDesc;
-	//mTech->GetDesc(&techDesc);
-	//for (UINT p = 0; p < techDesc.Passes; ++p)
-	//{
-	//	///绘制电梯部分
-	//	XMMATRIX scale = XMMatrixScaling(10.f, 2.f, 10.f);      //方块尺寸
-	//	mfxEyePosW->SetRawValue(&mEyePosW, 0, sizeof(XMFLOAT3));
-	//	XMMATRIX offset = XMMatrixTranslation(-0.1f, liftHeight - 19.999f, 0.f);
-	//	XMMATRIX worldViewProj = world * scale * offset * view * proj;     //获取当前世界观察矩阵， 这里一定要注意相乘的顺序，scale一定要在offset前面
-	//	XMMATRIX worldInvTranspose = MathHelper::InverseTranspose(world*scale);   //保持网格因为Scale变化造成发现异常
-
-	//	//同样是设置着色器里的缓冲区参数
-	//	//mfxWorld->SetMatrix(reinterpret_cast<float*>(&world));
-	//	//mfxWorldInvTranspose->SetMatrix(reinterpret_cast<float*>(&worldInvTranspose));
-	//	//mfxWorldViewProj->SetMatrix(reinterpret_cast<float*>(&worldViewProj));
-	//	//mfxMaterial->SetRawValue(&mBoxMat, 0, sizeof(mBoxMat));
-	//	//mfxTexTransform->SetMatrix(reinterpret_cast<const float*>(&XMMatrixScaling(2.f, 2.f, 0.f)));   //调整纹理大小，以免导致拉伸
-	//	//mfxDiffuseMap->SetResource(mliftSRV);  //设置纹理
-
-	//	//mfxEyePosW->SetRawValue(&mEyePosW, 0, sizeof(mEyePosW));
-	//	//XMMATRIX worldViewProj = world * view * proj;     //获取当前世界观察矩阵， 这里一定要注意相乘的顺序，scale一定要在offset前面
-	//	//XMMATRIX worldInvTranspose = MathHelper::InverseTranspose(world);   //保持网格因为Scale变化造成发现异常
-
-	//	XMMATRIX CarRotation = XMMatrixRotationRollPitchYaw(0.f, 179.1f, 0.f);
-	//	worldViewProj = world * CarRotation * view * proj;
-	//	mfxWorld->SetMatrix(reinterpret_cast<float*>(&world));
-	//	mfxWorldInvTranspose->SetMatrix(reinterpret_cast<float*>(&worldInvTranspose));
-	//	mfxWorldViewProj->SetMatrix(reinterpret_cast<float*>(&worldViewProj));
-	//	mfxMaterial->SetRawValue(&mBoxMat, 0, sizeof(mBoxMat));
-	//	mfxDiffuseMap->SetResource(mliftSRV);  //设置纹理
-
-	//	mTech->GetPassByIndex(p)->Apply(0, md3dImmediateContext);    //这里一定要Apply这样才能绘制新的图形
-	//	md3dImmediateContext->DrawIndexed(mCarIndexCount, 0, 0);
-	//}
-
-	//mSky->Draw(md3dImmediateContext, mCam);
-	
 	DrawScene(mCam, true);
 
-	md3dImmediateContext->RSSetState(0);
-	md3dImmediateContext->OMSetDepthStencilState(0, 0);
-	mSwapChain->Present(0, 0);     //显示BackBuffer
+	mSwapChain->Present(0, 0);     //显示BackBuffer，可以选择开启或关闭垂直同步
 }
 
 
@@ -629,7 +619,7 @@ void RunGame::DrawScene(const Camera& inCam, bool drawCar)
 	XMMATRIX worldInvTranspose = MathHelper::InverseTranspose(world*scale);   //保持网格因为Scale变化造成发现异常
 	XMMATRIX worldViewProj;    //获取当前世界观察矩阵， 这里一定要注意相乘的顺序，scale一定要在offset前面
 	XMMATRIX TexTransform = XMMatrixScaling(7.f, 10.f, 1.f);
-	XMMATRIX FloorOffset = XMMatrixTranslation(0.f, -2.5f, 40.f);
+	XMMATRIX FloorOffset = XMMatrixTranslation(0.f, -2.5f, -40.f);
 	XMMATRIX TexOffset = XMMatrixTranslation(0.f, floorMovePerFrame, 0.f);
 	TexTransform = TexTransform * TexOffset;
 
@@ -648,7 +638,7 @@ void RunGame::DrawScene(const Camera& inCam, bool drawCar)
 
 	world = world * FloorOffset;
 
-	D3DX11_TECHNIQUE_DESC techDesc, techDesc1, techDesc2;
+	D3DX11_TECHNIQUE_DESC techDesc, techDesc1, techDesc2, techDesc3;
 	mFloorTech->GetDesc(&techDesc);
 	for (UINT i = 0; i < techDesc.Passes; ++i)
 	{
@@ -698,7 +688,7 @@ void RunGame::DrawScene(const Camera& inCam, bool drawCar)
 	for (size_t i = 0; i < ObstaclesInfo.size(); ++i)
 	{
 		XMFLOAT3 ObstacleLoc = ObstaclesInfo[i];
-		ObstacleLoc.z -= CarMoveDistancePerFrame;
+		ObstacleLoc.z += CarMoveDistancePerFrame;
 		XMMATRIX boxOffset = XMMatrixTranslation(ObstacleLoc.x, ObstacleLoc.y, ObstacleLoc.z);
 
 		worldViewProj = world * scale * boxOffset * view * proj;     //获取当前世界观察矩阵， 这里一定要注意相乘的顺序，scale一定要在offset前面
@@ -716,8 +706,12 @@ void RunGame::DrawScene(const Camera& inCam, bool drawCar)
 			md3dImmediateContext->DrawIndexed(36, 0, 0);
 		}
 		
-		if (ObstacleLoc.z < -30.f)
+		if (ObstacleLoc.z > 20.f)
+		{
 			ObstaclesInfo.erase(ObstaclesInfo.begin());    //该障碍物已经不需要绘制
+			mPlayerScore += 10.f;
+		}
+			
 		if (drawCar)
 			ObstaclesInfo[i] = ObstacleLoc;
 	}
@@ -725,9 +719,6 @@ void RunGame::DrawScene(const Camera& inCam, bool drawCar)
 	//绘制汽车
 	if (drawCar)
 	{
-		md3dImmediateContext->IASetInputLayout(mInputLayout);
-		md3dImmediateContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);   //绘制的基本图元为三角形
-
 		UINT stride = sizeof(Vertex);   //顶点结构的大小
 		UINT offset = 0;
 		
@@ -740,7 +731,7 @@ void RunGame::DrawScene(const Camera& inCam, bool drawCar)
 		{
 			CurPosX = GameMath::FInterpTo(CurPosX, NextPosX, mTimer.DeltaTime(), 8.f);
 
-			if (abs(NextPosX - CurPosX) < 0.1f)
+			if (abs(NextPosX - CurPosX) < 0.01f)
 			{
 				CurPosX = NextPosX;
 				CurrentPos = NextPos;
@@ -752,10 +743,13 @@ void RunGame::DrawScene(const Camera& inCam, bool drawCar)
 		{
 			CurHeight = GameMath::FInterpTo(CurHeight, DestHeight, mTimer.DeltaTime(), 7.f);
 
-			if (abs(DestHeight - CurHeight) < 0.05f)
+			if ((DestHeight-CurHeight)>=0.f && (DestHeight - CurHeight) < 0.05f)
 			{
 				DestHeight = 0.f;
 			}
+
+			if ((CurHeight - DestHeight) >= 0.f && (CurHeight - DestHeight) < 0.05f)
+				bInJump = false;
 		}
 
 		XMMATRIX offsetXY = XMMatrixTranslation(CurPosX, CurHeight, 0.f);
@@ -764,12 +758,14 @@ void RunGame::DrawScene(const Camera& inCam, bool drawCar)
 		mCarTech->GetDesc(&techDesc1);
 		for (UINT p = 0; p < techDesc1.Passes; ++p)
 		{
-			world = XMLoadFloat4x4(&mWorld)*offsetXY;
+			world = XMLoadFloat4x4(&mWorld);
+			XMMATRIX CarRotation = XMMatrixRotationRollPitchYaw(0.f, 179.1f, 0.f);
+			world = world * offsetXY ;
+			//world = 
 			mCarfxEyePosW->SetRawValue(&mEyePosW, 0, sizeof(XMFLOAT3));
 			XMMATRIX offset = XMMatrixTranslation(0.f, 0.f, 0.f);
-		
-			XMMATRIX CarRotation = XMMatrixRotationRollPitchYaw(0.f, 179.1f, 0.f);
-			worldViewProj = world * CarRotation * view * proj;
+	
+			worldViewProj = world  * view * proj;
 			mCarfxWorld->SetMatrix(reinterpret_cast<float*>(&world));
 			mCarfxWorldInvTranspose->SetMatrix(reinterpret_cast<float*>(&worldInvTranspose));
 			mCarfxWorldViewProj->SetMatrix(reinterpret_cast<float*>(&worldViewProj));
@@ -783,35 +779,96 @@ void RunGame::DrawScene(const Camera& inCam, bool drawCar)
 		}
 	}
 
-	for (size_t i = 0; i < ObstaclesInfo.size(); ++i)
+	if (bDrawBlur && drawCar)
 	{
-		AxisAlignedBox obstacleTemp, carTemp;
-		XMMATRIX boxScale = XMMatrixScaling(10.f, 7.f, 5.f);
-	
-		obstacleTemp.Center = ObstaclesInfo[i];
-		carTemp.Extents = carCollision.Extents;
-		XMVECTOR extent = XMVector3Transform(XMLoadFloat3(&obstacleCollision.Extents), boxScale);
-		XMVECTOR carCenter = XMVector3Transform(XMLoadFloat3(&carCollision.Center), XMMatrixTranslation(CurPosX, CurHeight, 0.f)*XMMatrixRotationRollPitchYaw(0.f, 179.1f, 0.f));
-		XMStoreFloat3(&obstacleTemp.Extents, extent);
-		XMStoreFloat3(&carTemp.Center, carCenter);
+		//下面就开始渲染模糊效果
+		ID3D11RenderTargetView* renderTarget[1];
+		renderTarget[0] = mRenderTargetView;
+		md3dImmediateContext->IASetInputLayout(mInputLayout);
+		md3dImmediateContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		md3dImmediateContext->OMSetRenderTargets(1, renderTarget, mDepthStencilView);
+		mBlurFilter.BlurInPlace(md3dImmediateContext, mBlurSRV, mBlurUAV, 4);
 
-		if (XNA::IntersectAxisAlignedBoxAxisAlignedBox(&carTemp, &obstacleTemp))
+		md3dImmediateContext->ClearRenderTargetView(mRenderTargetView, reinterpret_cast<const float*>(&Colors::Silver));
+		md3dImmediateContext->ClearDepthStencilView(mDepthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.f, 0);    
+
+		stride = sizeof(Vertex);
+		offset = 0;
+		md3dImmediateContext->IASetVertexBuffers(0, 1, &mBlurVB, &stride, &offset);
+		md3dImmediateContext->IASetIndexBuffer(mBlurIB, DXGI_FORMAT_R32_UINT, 0);
+		
+		mfxDiffuseMap->SetResource(mBlurFilter.GetBlurredOutput()/*mWallSRV*/);
+		mBlurScreenTech->GetDesc(&techDesc3);
+		XMMATRIX identity = XMMatrixIdentity();
+		for (UINT p = 0; p < techDesc3.Passes; ++p)
 		{
-			blockNum++;
+			mfxWorld->SetMatrix(reinterpret_cast<float*>(&identity));
+			mfxWorldViewProj->SetMatrix(reinterpret_cast<float*>(&identity));
+			mfxWorldInvTranspose->SetMatrix(reinterpret_cast<float*>(&identity));
+			mfxTexTransform->SetMatrix(reinterpret_cast<float*>(&identity));
+
+			mBlurScreenTech->GetPassByIndex(p)->Apply(0, md3dImmediateContext);
+			md3dImmediateContext->DrawIndexed(6, 0, 0);
 		}
-
-		//下面代码用于调试
-		wchar_t str[100];
-		int t = NextPos;
-		int k = CurrentPos;
-		swprintf(str, 100, L"CenterX: %d, FPS: %2.2f, Floor Speed: %2.2f, DeltaTime: %2.4f",blockNum, 1.f / mTimer.DeltaTime(), floorSpeed, mTimer.DeltaTime());
-
-		SetWindowText(mhMainWnd, str);
 	}
+	else if(!bDrawBlur && drawCar)
+		for (size_t i = 0; i < ObstaclesInfo.size(); ++i)
+		{
+			AxisAlignedBox obstacleTemp, carTemp;
+			XMMATRIX boxScale = XMMatrixScaling(10.f, 7.f, 5.f);
 
-	
+			obstacleTemp.Center = ObstaclesInfo[i];
+			carTemp.Extents = carCollision.Extents;
+			XMVECTOR extent = XMVector3Transform(XMLoadFloat3(&obstacleCollision.Extents), boxScale);
+			XMVECTOR carCenter = XMVector3Transform(XMLoadFloat3(&carCollision.Center), XMMatrixTranslation(CurPosX, CurHeight, 0.f));     //如果需要汽车旋转，后面还要乘上旋转矩阵
+			XMStoreFloat3(&obstacleTemp.Extents, extent);
+			XMStoreFloat3(&carTemp.Center, carCenter);
 
+			if (XNA::IntersectAxisAlignedBoxAxisAlignedBox(&carTemp, &obstacleTemp))
+			{
+				//bDrawBlur = true;
+				wchar_t str[100];
+				swprintf(str, 100, L"最终得分:%2.f 是否重新开始？", mPlayerScore);
+				DrawScreenBlur();
+				blockNum++;
+				int br = MessageBox(mhMainWnd, str, L"游戏结束", 1);
+				if (br == IDCANCEL)
+				{
+					quitGame = true;
+				}
+				else if (br == IDOK)
+				{
+					bRestart = true;
+					floorSpeed = 2.f;
+					mTimer.Reset();      //重置定时器
+					ObstaclesInfo.clear();
+					SpawnObstacleDistance = 100.f;
+					DestHeight = 0.f;
+					NextPosX = 0.f;
+					NextPos = EPlayerMoveDir::ECenter;     //恢复汽车的位置
+					bInMove = true;
+					mPlayerScore = 0.f;
+				}
+
+			}
+
+			//下面代码用于调试
+			wchar_t str[100];
+			int t = NextPos;
+			int k = CurrentPos;
+			swprintf(str, 100, L"PlayerScore %2.f, FPS: %2.2f, Floor Speed: %2.2f, TotalTime: %2.4f", mPlayerScore, 1.f / mTimer.DeltaTime(), floorSpeed, mTimer.TotalTime());
+
+			SetWindowText(mhMainWnd, str);
+		}
 }
+
+void RunGame::DrawScreenBlur()
+{
+	bDrawBlur = true;
+	DrawScene();
+	bDrawBlur = false;
+}
+
 void RunGame::BuildBoxBuffer()
 {
 	Vertex v[24];
@@ -986,7 +1043,8 @@ void RunGame::BuildCarBuffer()
 	//max = XMVector3Transform(max, carRotation);
 	
 	XMStoreFloat3(&carCollision.Center, (min + max)*0.5f);
-	XMStoreFloat3(&carCollision.Extents, (max - min)*0.5f);
+	XMStoreFloat3(&carCollision.Extents, (max - min)*0.4f);
+	carCollision.Extents.x *= 0.6f;
 }
 
 void RunGame::BuildFloorBuffer()
@@ -1050,7 +1108,8 @@ void RunGame::BuildBoxFX()
 	//创建Shader
 	D3DX11CreateEffectFromMemory(&compileShader[0], size, 0, md3dDevice, &mFX);
 
-	mTech = mFX->GetTechniqueByName("LiftTech");
+	mTech = mFX->GetTechniqueByName("LiftTechLight");
+	mBlurScreenTech = mFX->GetTechniqueByName("LiftTech");
 	mfxWorldViewProj = mFX->GetVariableByName("gWorldViewProj")->AsMatrix(); //从效果文件中获取矩阵变量
 	mfxWorld = mFX->GetVariableByName("gWorld")->AsMatrix();     //获取world变量
 	mfxWorldInvTranspose = mFX->GetVariableByName("gWorldInvTranspose")->AsMatrix();
@@ -1135,7 +1194,7 @@ void RunGame::BuildCarFX()
 
 	mCarTech = mCarFX->GetTechniqueByName("Light3");
 	mCarfxDirLight = mCarFX->GetVariableByName("gDirLights");
-	mCarfxEyePosW = mCarFX->GetVariableByName("gEyePosw")->AsVector();
+	mCarfxEyePosW = mCarFX->GetVariableByName("gEyePosW")->AsVector();
 	mCarfxMaterial = mCarFX->GetVariableByName("gMaterial");
 	mCarfxWorld = mCarFX->GetVariableByName("gWorld")->AsMatrix();
 	mCarfxWorldInvTranspose = mCarFX->GetVariableByName("gWorldInvTranspose")->AsMatrix();
@@ -1234,19 +1293,21 @@ void RunGame::BuildCubeFaceCamera(float x, float y, float z)
 	{
 		XMFLOAT3(x + 1.0f, y, z), // +X
 		XMFLOAT3(x - 1.0f, y, z), // -X
-		XMFLOAT3(x, y - 1.0f, z), // +Y
-		XMFLOAT3(x, y + 1.0f, z), // -Y
-		XMFLOAT3(x, y, z - 1.0f), // +Z
-		XMFLOAT3(x, y + 0.2f, z + 1.0f)  // -Z
+		XMFLOAT3(x, y + 1.0f, z), // +Y
+		XMFLOAT3(x, y - 1.0f, z), // -Y	
+		XMFLOAT3(x, y, z + 1.0f), // +Z
+		XMFLOAT3(x, y, z - 1.0f)  // -Z
+		
+		
 	};
 
 	// 摄像机上方向 向量
 	XMFLOAT3 ups[6] =
 	{
-		XMFLOAT3(0.0f, -1.0f, 0.0f),  // +X
-		XMFLOAT3(0.0f, -1.0f, 0.0f),  // -X
-		XMFLOAT3(0.0f, 0.0f, 1.0f),  //-Y
-		XMFLOAT3(0.0f, 0.0f, -1.0f), // +Y
+		XMFLOAT3(0.0f, 1.0f, 0.0f),  // +X
+		XMFLOAT3(0.0f, 1.0f, 0.0f),  // -X
+		XMFLOAT3(0.0f, 0.0f, -1.0f),  //+Y
+		XMFLOAT3(0.0f, 0.0f, 1.0f), // -Y
 		XMFLOAT3(0.0f, 1.0f, 0.0f),	 // +Z
 		XMFLOAT3(0.0f, 1.0f, 0.0f)	 // -Z
 	};
@@ -1277,9 +1338,92 @@ void RunGame::UpdateUpCamera()
 	mCubeMapCamera[2].SetLens(0.5f*XM_PI, 1.0f, 0.1f, 1000.0f);
 	mCubeMapCamera[2].UpdateViewMatrix();
 
-	mCubeMapCamera[3].LookAt(XMFLOAT3(0.f, 2.f, 0.f), finalTarget, XMFLOAT3(0.0f, 0.0f, -1.0f));
-	mCubeMapCamera[3].SetLens(0.5f*XM_PI, 1.0f, 0.1f, 1000.0f);
-	mCubeMapCamera[3].UpdateViewMatrix();
+	mCubeMapCamera[0].LookAt(XMFLOAT3(0.f, 2.f, 0.f), finalTarget, XMFLOAT3(0.0f, 0.0f, -1.0f));
+	mCubeMapCamera[0].SetLens(0.5f*XM_PI, 1.0f, 0.1f, 1000.0f);
+	mCubeMapCamera[0].UpdateViewMatrix();
+}
+
+void RunGame::CreateBlurResource()
+{
+	ReleaseCOM(mBlurSRV);
+	ReleaseCOM(mBlurUAV);
+	ReleaseCOM(mBlurRTV);
+
+	D3D11_TEXTURE2D_DESC texDesc; 
+	texDesc.Width              = mClientWidth;
+	texDesc.Height             = mClientHeight;
+	texDesc.MipLevels          = 1;
+	texDesc.ArraySize          = 1;
+	texDesc.Format             = DXGI_FORMAT_R8G8B8A8_UNORM;
+	texDesc.SampleDesc.Count   = 1;
+	texDesc.SampleDesc.Quality = 0;
+	texDesc.Usage              = D3D11_USAGE_DEFAULT;
+	texDesc.BindFlags          = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;        //该纹理会用于RenderTarget，ShaderResource，以及可读写ShaderResource
+	texDesc.CPUAccessFlags     = 0;
+	texDesc.MiscFlags          = 0;
+
+	ID3D11Texture2D* blurTex = nullptr;
+	md3dDevice->CreateTexture2D(&texDesc, nullptr, &blurTex);
+
+	//下面就要创建需要用到的两张资源图，注意这两张资源图还是指向上面创建的tex
+	md3dDevice->CreateShaderResourceView(blurTex, 0, &mBlurSRV);
+	md3dDevice->CreateRenderTargetView(blurTex, 0, &mBlurRTV);
+	md3dDevice->CreateUnorderedAccessView(blurTex, 0, &mBlurUAV);
+
+	ReleaseCOM(blurTex);      //COM组件是引用计数，删除这个引用
+
+	//创建Shader
+	std::ifstream fin(L"Shader/Blur.fxo", std::ios::binary);
+
+	fin.seekg(0, std::ios_base::end);
+	int size = (int)fin.tellg();     //获取该文件的大小
+	fin.seekg(0, std::ios_base::beg);
+	std::vector<char> compileShader(size);
+
+	fin.read(&compileShader[0], size);
+	fin.close();
+
+	D3DX11CreateEffectFromMemory(&compileShader[0], size, 0, md3dDevice, &mBlurFX);
+
+	mHorzBlurTech = mBlurFX->GetTechniqueByName("HorzBlur");
+	mVertBlurTech = mBlurFX->GetTechniqueByName("VertBlur");
+	mfxBlurInputMap = mBlurFX->GetVariableByName("gInput")->AsShaderResource();
+	mfxBlurOutputMap = mBlurFX->GetVariableByName("gOutput")->AsUnorderedAccessView(); 
+
+	//创建缓冲区
+	GeometryGenerator::MeshData quad;
+
+	GeometryGenerator geoGen;
+	geoGen.CreateFullscreenQuad(quad);
+
+	std::vector<Vertex> vertices(quad.Vertices.size());
+
+	for (UINT i = 0; i < quad.Vertices.size(); ++i)
+	{
+		vertices[i].Pos = quad.Vertices[i].Position;
+		vertices[i].Normal = quad.Vertices[i].Normal;
+		vertices[i].TexCoord = quad.Vertices[i].TexC;
+	}
+
+	D3D11_BUFFER_DESC vbd;
+	vbd.Usage = D3D11_USAGE_IMMUTABLE;
+	vbd.ByteWidth = sizeof(Vertex) * quad.Vertices.size();
+	vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+	vbd.CPUAccessFlags = 0;
+	vbd.MiscFlags = 0;
+	D3D11_SUBRESOURCE_DATA vinitData;
+	vinitData.pSysMem = &vertices[0];
+	md3dDevice->CreateBuffer(&vbd, &vinitData, &mBlurVB);
+
+	D3D11_BUFFER_DESC ibd;
+	ibd.Usage = D3D11_USAGE_IMMUTABLE;
+	ibd.ByteWidth = sizeof(UINT) * quad.Indices.size();
+	ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
+	ibd.CPUAccessFlags = 0;
+	ibd.MiscFlags = 0;
+	D3D11_SUBRESOURCE_DATA iinitData;
+	iinitData.pSysMem = &quad.Indices[0];
+	md3dDevice->CreateBuffer(&ibd, &iinitData, &mBlurIB);
 }
 
 void RunGame::SetInputLayout()
@@ -1318,5 +1462,3 @@ void RunGame::SetInputLayout()
 	mFloorTech->GetPassByIndex(0)->GetDesc(&passDesc1);
 	md3dDevice->CreateInputLayout(PosNormalTexTan_, 4, passDesc1.pIAInputSignature, passDesc1.IAInputSignatureSize, &mFloorInputLayout);
 }
-
-
