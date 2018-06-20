@@ -60,6 +60,9 @@
     <ClCompile Include="GameMath.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="BlurFilter.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="RunGame.h">
@@ -101,6 +104,9 @@
     <ClInclude Include="GameMath.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="BlurFilter.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shader\Lift.fx">
@@ -116,6 +122,9 @@
       <Filter>Shader</Filter>
     </CustomBuild>
     <CustomBuild Include="Shader\Floor.fx">
+      <Filter>Shader</Filter>
+    </CustomBuild>
+    <CustomBuild Include="Shader\Blur.fx">
       <Filter>Shader</Filter>
     </CustomBuild>
   </ItemGroup>

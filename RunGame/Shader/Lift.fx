@@ -62,7 +62,7 @@ VertexOut VS(VertexIn vin)
 	return vout;
 }
 
-float4 PS(VertexOut pin, uniform bool gUseTexture) : SV_Target
+float4 PS(VertexOut pin, uniform bool gUseLight, uniform bool gUseTexture) : SV_Target
 {
 	pin.NormalW = normalize(pin.NormalW);
 
@@ -81,38 +81,43 @@ float4 PS(VertexOut pin, uniform bool gUseTexture) : SV_Target
 	float4 spec = float4(0.0f, 0.0f, 0.0f, 0.0f);
 
 	float4 A, D, S;
+	float4 litColor;
 
-	//下面是用开源代码求光照影响,LightHelper为开源
-	ComputeDirectionalLight(gMaterial, gDirLight, pin.NormalW, toEyeW, A, D, S);
-	ambient += A;
-	diffuse += D;
-	spec += S;
+	litColor = texColor;
+	if (gUseLight)
+	{
+		//下面是用开源代码求光照影响,LightHelper
+		ComputeDirectionalLight(gMaterial, gDirLight, pin.NormalW, toEyeW, A, D, S);
+		ambient += A;
+		diffuse += D;
+		spec += S;
 
-	/*ComputePointLight(gMaterial, gPointLight, pin.PosW, pin.NormalW, toEyeW, A, D, S);
-	ambient += A;
-	diffuse += D;
-	spec += S;
+		litColor = texColor * (ambient + diffuse) + spec;
 
-	ComputeSpotLight(gMaterial, gSpotLight, pin.PosW, pin.NormalW, toEyeW, A, D, S);
-	ambient += A;
-	diffuse += D;
-	spec += S;*/
-
-	float4 litColor = texColor * (ambient + diffuse) + spec;
-
-	// 结合纹理的alpha通道
-	litColor.a = gMaterial.Diffuse.a * texColor.a;
-
+		// 结合纹理的alpha通道
+		litColor.a = gMaterial.Diffuse.a * texColor.a;
+	}
+	
 	return litColor;
 }
 
-technique11 LiftTech
+technique11 LiftTechLight
 {
 	pass P0
 	{
 		//渲染管道中执行步骤，这里没有使用几何着色器
 		SetVertexShader(CompileShader(vs_5_0, VS()));
 		SetGeometryShader(NULL);
-		SetPixelShader(CompileShader(ps_5_0, PS(true)));
+		SetPixelShader(CompileShader(ps_5_0, PS(true, true)));
+	}
+}
+
+technique11 LiftTech
+{
+	pass P0
+	{
+		SetVertexShader(CompileShader(vs_5_0, VS()));
+		SetGeometryShader(NULL);
+		SetPixelShader(CompileShader(ps_5_0, PS(false, true)));
 	}
 }
