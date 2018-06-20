@@ -1,9 +1,3 @@
-//=============================================================================
-// Basic.fx by Frank Luna (C) 2011 All Rights Reserved.
-//
-// Basic effect that currently supports transformations, lighting, and texturing.
-//=============================================================================
-
 #include "LightHelper.fx"
  
 cbuffer cbPerFrame
@@ -21,7 +15,6 @@ cbuffer cbPerObject
 	Material gMaterial;
 }; 
 
-// Nonnumeric values cannot be added to a cbuffer.
 TextureCube gCubeMap;
 
 SamplerState samAnisotropic
@@ -52,14 +45,14 @@ VertexOut VS(VertexIn vin)
 {
 	VertexOut vout;
 	
-	// Transform to world space space.
+	// 局部坐标转换到世界坐标
 	vout.PosW    = mul(float4(vin.PosL, 1.0f), gWorld).xyz;
 	vout.NormalW = mul(vin.NormalL, (float3x3)gWorldInvTranspose);
 		
-	// Transform to homogeneous clip space.
+	// 转换到NDK控件
 	vout.PosH = mul(float4(vin.PosL, 1.0f), gWorldViewProj);
 	
-	// Output vertex attributes for interpolation across triangle.
+	// 计算材质偏移
 	vout.Tex = mul(float4(vin.Tex, 0.0f, 1.0f), gTexTransform).xy;
 
 	return vout;
@@ -72,34 +65,26 @@ float4 PS(VertexOut pin,
 		  uniform bool gFogEnabled, 
 		  uniform bool gReflectionEnabled) : SV_Target
 {
-	// Interpolating normal can unnormalize it, so normalize it.
     pin.NormalW = normalize(pin.NormalW);
 
-	// The toEye vector is used in lighting.
 	float3 toEye = gEyePosW - pin.PosW;
 
-	// Cache the distance to the eye from this surface point.
 	float distToEye = length(toEye);
 
-	// Normalize.
+	// 单位化到眼睛的向量
 	toEye /= distToEye;
 	
-    // Default to multiplicative identity.
     float4 texColor = float4(1, 1, 1, 1);
 	 
-	//
-	// Lighting.
-	//
-
 	float4 litColor = texColor;
 	if( gLightCount > 0  )
 	{  
-		// Start with a sum of zero. 
+		// 初始化
 		float4 ambient = float4(0.0f, 0.0f, 0.0f, 0.0f);
 		float4 diffuse = float4(0.0f, 0.0f, 0.0f, 0.0f);
 		float4 spec    = float4(0.0f, 0.0f, 0.0f, 0.0f);
 
-		// Sum the light contribution from each light source.  
+		//计算光照影响
 		[unroll]
 		for(int i = 0; i < gLightCount; ++i)
 		{
@@ -116,6 +101,7 @@ float4 PS(VertexOut pin,
 
 		if( gReflectionEnabled )
 		{
+			//下面是透明效果
 			//float3 incident = -toEye;
 			//float3 reflectionVector = reflect(incident, pin.NormalW);   //计算反射向量
 			//float3 refractionVector = refract(incident, pin.NormalW, 0.97f);   //计算折射方向，第三个参数是折射因素（两种介质反射率相除）
@@ -124,6 +110,7 @@ float4 PS(VertexOut pin,
 
 			//litColor += gMaterial.Reflect*refractionColor;  //这里根据不同的要求选择不同的反射参数
 
+			//镜面反射
 			float3 incident = -toEye;
 			float3 reflectionVector = reflect(incident, pin.NormalW);
 			float4 reflectionColor = gCubeMap.Sample(samAnisotropic, reflectionVector);
@@ -138,25 +125,6 @@ float4 PS(VertexOut pin,
     return litColor;
 }
 
-technique11 Light1
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(3, false, true, false, true) ) );    //不模拟雾和纹理贴图
-    }
-}
-
-technique11 Light2
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(2, false, false, false, false) ) );
-    }
-}
 
 technique11 Light3
 {
@@ -165,415 +133,5 @@ technique11 Light3
         SetVertexShader( CompileShader( vs_5_0, VS() ) );
 		SetGeometryShader( NULL );
         SetPixelShader( CompileShader( ps_5_0, PS(3, false, true, false, true) ) );
-    }
-}
-
-technique11 Light0Tex
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(0, true, false, false, false) ) );
-    }
-}
-
-technique11 Light1Tex
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(1, true, false, false, false) ) );
-    }
-}
-
-technique11 Light2Tex
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(2, true, false, false, false) ) );
-    }
-}
-
-technique11 Light3Tex
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(3, true, false, false, false) ) );
-    }
-}
-
-technique11 Light0TexAlphaClip
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(0, true, true, false, false) ) );
-    }
-}
-
-technique11 Light1TexAlphaClip
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(1, true, true, false, false) ) );
-    }
-}
-
-technique11 Light2TexAlphaClip
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(2, true, true, false, false) ) );
-    }
-}
-
-technique11 Light3TexAlphaClip
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(3, true, true, false, false) ) );
-    }
-}
-
-technique11 Light1Fog
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(1, false, false, true, false) ) );
-    }
-}
-
-technique11 Light2Fog
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(2, false, false, true, false) ) );
-    }
-}
-
-technique11 Light3Fog
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(3, false, false, true, false) ) );
-    }
-}
-
-technique11 Light0TexFog
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(0, true, false, true, false) ) );
-    }
-}
-
-technique11 Light1TexFog
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(1, true, false, true, false) ) );
-    }
-}
-
-technique11 Light2TexFog
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(2, true, false, true, false) ) );
-    }
-}
-
-technique11 Light3TexFog
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(3, true, false, true, false) ) );
-    }
-}
-
-technique11 Light0TexAlphaClipFog
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(0, true, true, true, false) ) );
-    }
-}
-
-technique11 Light1TexAlphaClipFog
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(1, true, true, true, false) ) );
-    }
-}
-
-technique11 Light2TexAlphaClipFog
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(2, true, true, true, false) ) );
-    }
-}
-
-technique11 Light3TexAlphaClipFog
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(3, true, true, true, false) ) ); 
-    }
-}
-
-technique11 Light1Reflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(1, false, false, false, true) ) );
-    }
-}
-
-technique11 Light2Reflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(2, false, false, false, true) ) );
-    }
-}
-
-technique11 Light3Reflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(3, false, false, false, true) ) );
-    }
-}
-
-technique11 Light0TexReflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(0, true, false, false, true) ) );
-    }
-}
-
-technique11 Light1TexReflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(1, true, false, false, true) ) );
-    }
-}
-
-technique11 Light2TexReflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(2, true, false, false, true) ) );
-    }
-}
-
-technique11 Light3TexReflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(3, true, false, false, true) ) );
-    }
-}
-
-technique11 Light0TexAlphaClipReflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(0, true, true, false, true) ) );
-    }
-}
-
-technique11 Light1TexAlphaClipReflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(1, true, true, false, true) ) );
-    }
-}
-
-technique11 Light2TexAlphaClipReflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(2, true, true, false, true) ) );
-    }
-}
-
-technique11 Light3TexAlphaClipReflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(3, true, true, false, true) ) );
-    }
-}
-
-technique11 Light1FogReflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(1, false, false, true, true) ) );
-    }
-}
-
-technique11 Light2FogReflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(2, false, false, true, true) ) );
-    }
-}
-
-technique11 Light3FogReflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(3, false, false, true, true) ) );
-    }
-}
-
-technique11 Light0TexFogReflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(0, true, false, true, true) ) );
-    }
-}
-
-technique11 Light1TexFogReflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(1, true, false, true, true) ) );
-    }
-}
-
-technique11 Light2TexFogReflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(2, true, false, true, true) ) );
-    }
-}
-
-technique11 Light3TexFogReflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(3, true, false, true, true) ) );
-    }
-}
-
-technique11 Light0TexAlphaClipFogReflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(0, true, true, true, true) ) );
-    }
-}
-
-technique11 Light1TexAlphaClipFogReflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(1, true, true, true, true) ) );
-    }
-}
-
-technique11 Light2TexAlphaClipFogReflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(2, true, true, true, true) ) );
-    }
-}
-
-technique11 Light3TexAlphaClipFogReflect
-{
-    pass P0
-    {
-        SetVertexShader( CompileShader( vs_5_0, VS() ) );
-		SetGeometryShader( NULL );
-        SetPixelShader( CompileShader( ps_5_0, PS(3, true, true, true, true) ) ); 
     }
 }

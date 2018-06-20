@@ -1,8 +1,3 @@
-//=============================================================================
-// Sky.fx by Frank Luna (C) 2011 All Rights Reserved.
-//
-// Effect used to shade sky dome.
-//=============================================================================
 
 cbuffer cbPerFrame
 {
@@ -33,10 +28,9 @@ VertexOut VS(VertexIn vin)
 {
 	VertexOut vout;
 	
-	// Set z = w so that z/w = 1 (i.e., skydome always on far plane).
+	// 为了保持摄像机原理盒子边缘，这里z=w;
 	vout.PosH = mul(float4(vin.PosL, 1.0f), gWorldViewProj).xyww;
 	
-	// Use local vertex position as cubemap lookup vector.
 	vout.PosL = vin.PosL;
 	
 	return vout;
@@ -47,11 +41,13 @@ float4 PS(VertexOut pin) : SV_Target
 	return gCubeMap.Sample(samTriLinearSam, pin.PosL);
 }
 
+// 光栅化状态
 RasterizerState NoCull
 {
     CullMode = None;
 };
 
+//深度模板
 DepthStencilState LessEqualDSS
 {
     DepthFunc = LESS_EQUAL;
